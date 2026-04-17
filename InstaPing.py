@@ -10,19 +10,21 @@ from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-USERNAME          = "your_username"
-PASSWORD          = "your_password"
-BARK_TOKEN        = "your_bark_device_token"   # From Bark app on iPhone
-BARK_SERVER       = "https://api.day.app"       # Default Bark server 
-ACCOUNTS_TO_WATCH = [
-    "ExampleAccount1",
-    "ExampleAccount2",
-]
-CHECK_INTERVAL    = 240       
-SESSION_FILE      = Path("ig_session.json")
-STATE_FILE        = Path("ig_state.json")
-LOG_FILE          = Path("ig_monitor.log")
-HEADLESS          = True
+# Identity & Auth
+USERNAME          = os.getenv("IG_USERNAME")
+PASSWORD          = os.getenv("IG_PASSWORD")
+BARK_TOKEN        = os.getenv("BARK_TOKEN")
+BARK_SERVER       = os.getenv("BARK_SERVER", "https://api.day.app")
+
+ACCOUNTS_RAW      = os.getenv("ACCOUNTS_TO_WATCH", "")
+ACCOUNTS_TO_WATCH = [acc.strip() for acc in ACCOUNTS_RAW.split(",") if acc.strip()]
+
+CHECK_INTERVAL    = int(os.getenv("CHECK_INTERVAL", "240"))
+HEADLESS          = os.getenv("HEADLESS", "True").lower() == "true"
+
+SESSION_FILE      = Path(("SESSION_PATH", "ig_session.json"))
+STATE_FILE        = Path(("STATE_PATH", "ig_state.json"))
+LOG_FILE          = Path(("LOG_PATH", "ig_monitor.log"))
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
