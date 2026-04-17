@@ -23,9 +23,9 @@ ACCOUNTS_TO_WATCH = [acc.strip() for acc in ACCOUNTS_RAW.split(",") if acc.strip
 CHECK_INTERVAL    = int(os.getenv("CHECK_INTERVAL", "240"))
 HEADLESS          = os.getenv("HEADLESS", "True").lower() == "true"
 
-SESSION_FILE      = Path(("SESSION_PATH", "ig_session.json"))
-STATE_FILE        = Path(("STATE_PATH", "ig_state.json"))
-LOG_FILE          = Path(("LOG_PATH", "ig_monitor.log"))
+SESSION_FILE      = Path(os.getenv("SESSION_PATH", "ig_session.json"))
+STATE_FILE        = Path(os.getenv("STATE_PATH", "ig_state.json"))
+LOG_FILE          = Path(os.getenv("LOG_PATH", "ig_monitor.log"))
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
