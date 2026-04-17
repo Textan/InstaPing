@@ -12,9 +12,9 @@ InstaPing is a lightweight Python-based automation tool designed to monitor Inst
 
     State Management: Maintains a local record of "seen" content to ensure you only receive notifications for truly new   activity.
 
-    Efficient Resource Usage: Automatically blocks heavy media assets (images/videos) during the scraping process to       reduce bandwidth and CPU overhead.
+    Efficient Resource Usage: Automatically blocks heavy media assets (images/videos) during the scraping process to reduce bandwidth and CPU overhead.
 
-    Fail-Safe Mechanisms: Includes automated browser recovery and re-authentication logic if the monitoring cycle         encounters consecutive errors.
+    Fail-Safe Mechanisms: Includes automated browser recovery and re-authentication logic if the monitoring cycle encounters consecutive errors.
     
 📦 Installation
 
