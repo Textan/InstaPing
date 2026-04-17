@@ -10,7 +10,7 @@ InstaPing is a lightweight Python-based automation tool designed to monitor Inst
     
     Persistent Sessions: Saves authentication states to a local JSON file to minimize login frequency and reduce the risk of account flagging.
 
-    State Management: Maintains a local record of "seen" content to ensure you only receive notifications for truly new   activity.
+    State Management: Maintains a local record of "seen" content to ensure you only receive notifications for truly new activity.
 
     Efficient Resource Usage: Automatically blocks heavy media assets (images/videos) during the scraping process to reduce bandwidth and CPU overhead.
 
