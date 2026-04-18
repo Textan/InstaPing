@@ -266,3 +266,14 @@ if __name__ == "__main__":
         asyncio.run(run())
     except KeyboardInterrupt:
         log.info("Stopped by User")
+
+# Hugging Face Dummy Server Fix
+import http.server
+import socketserver
+import threading
+
+def run_dummy_server():
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", 7860), handler) as httpd:
+        httpd.serve_forever()
+threading.Thread(target=run_dummy_server, daemon=True).start()
