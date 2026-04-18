@@ -195,7 +195,7 @@ async def make_browser_and_page(pw, storage=None):
     return browser, context, page
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── MAIN LOOP ────────────────────────────────────────────────────────────────
+# ── MAIN LOOP ───────────────────────────────────────────────────────────────
 async def run():
     state        = load_state()
     seen_posts   = set(state["posts"])
@@ -266,14 +266,20 @@ if __name__ == "__main__":
         asyncio.run(run())
     except KeyboardInterrupt:
         log.info("Stopped by User")
+# ─────────────────────────────────────────────────────────────────────────────
 
+# ── HUGGING FACE ────────────────────────────────────────────────────────────
 # Hugging Face Dummy Server Fix
-import http.server
-import socketserver
-import threading
+from fastapi import FastAPI
+import uvicorn
+app = FastAPI()
 
-def run_dummy_server():
-    handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", 7860), handler) as httpd:
-        httpd.serve_forever()
-threading.Thread(target=run_dummy_server, daemon=True).start()
+@app.get("/")
+def read_root():
+    return {"status": "IG Monitor is Active", "time": datetime.now().strftime('%H:%M:%S')}
+
+if __name__ == "__main__":
+    monitor_thread = threading.Thread(target=lambda: asyncio.run(run()), daemon=True)
+    monitor_thread.start()
+
+    uvicorn.run(app, host="0.0.0.0", port=7860)
