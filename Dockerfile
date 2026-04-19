@@ -1,25 +1,17 @@
 FROM python:3.11-slim
 
-   RUN apt-get update && apt-get install -y \
-       wget \
-       gnupg \
-       apt-transport-https \
-       ca-certificates \
-       && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    wget gnupg apt-transport-https ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-   RUN apt-get update && apt-get install -y \
-       chromium \
-       && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-   WORKDIR /app
+RUN playwright install chromium
+RUN playwright install-deps chromium
 
-   COPY requirements.txt .
-   RUN pip install --no-cache-dir -r requirements.txt
+COPY InstaPing.py .
 
-   COPY InstaPing.py .
-
-   ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-   ENV HEADLESS=true
-   ENV CHROMIUM_PATH=/usr/bin/chromium
-
-   CMD ["python", "InstaPing.py"]
+ENV HEADLESS=true
+CMD ["python", "InstaPing.py"]
