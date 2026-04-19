@@ -8,7 +8,7 @@ FROM python:3.11-slim
        && rm -rf /var/lib/apt/lists/*
 
    RUN apt-get update && apt-get install -y \
-       chromium-browser \
+       chromium \
        && rm -rf /var/lib/apt/lists/*
 
    WORKDIR /app
@@ -20,5 +20,6 @@ FROM python:3.11-slim
 
    ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
    ENV HEADLESS=true
+   ENV CHROMIUM_PATH=/usr/bin/chromium
 
    CMD ["python", "InstaPing_Improved.py"]
