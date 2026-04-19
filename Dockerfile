@@ -22,4 +22,4 @@ FROM python:3.11-slim
    ENV HEADLESS=true
    ENV CHROMIUM_PATH=/usr/bin/chromium
 
-   CMD ["python", "InstaPing_Improved.py"]
+   CMD ["python", "InstaPing.py"]
