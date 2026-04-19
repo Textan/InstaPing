@@ -53,7 +53,6 @@ log = logging.getLogger("ig_monitor")
 
 # ── NOTIFICATIONS ────────────────────────────────────────────────────────────
 def notify(title: str, message: str, sound: str = "alert"):
-    """Send notification via Bark (requires BARK_TOKEN and BARK_SERVER)"""
     log.info(f"NOTIFY | {title} | {message}")
     
     if not BARK_TOKEN:
