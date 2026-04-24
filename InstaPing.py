@@ -4,6 +4,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import sys
 import threading
 import time
@@ -113,7 +114,7 @@ def save_state(state: dict):
 
 # ── BROWSER HELPERS ───────────────────────────────────────────────────────────
 _BLOCKED_PATTERNS = [
-    "**/*.{png,jpg,jpeg,gif,webp,svg,woff,woff2,ttf,mp4,mp3,css}",
+    "**/*.{png,jpg,jpeg,gif,webp,svg,woff,woff2,ttf,mp4,mp3}",
     "**googletagmanager**",
     "**google-analytics**",
     "**doubleclick**",
@@ -164,14 +165,21 @@ async def safe_goto(page, url: str, retries: int = 2) -> bool:
                 return False
     return False
 
+async def is_session_valid(page) -> bool:
+    try:
+        is_login_page   = "login" in page.url.lower()
+        has_login_input = await page.query_selector('input[name="username"]') is not None
+        return not (is_login_page or has_login_input)
+    except Exception as e:
+        log.error(f"Session validity check failed: {e}")
+        return False
+
 async def is_logged_in(page) -> bool:
     try:
         if "instagram.com" not in page.url:
             await safe_goto(page, "https://www.instagram.com/")
             await asyncio.sleep(1)
-        is_login_page   = "login" in page.url.lower()
-        has_login_input = await page.query_selector('input[name="username"]') is not None
-        return not (is_login_page or has_login_input)
+        return await is_session_valid(page)
     except Exception as e:
         log.error(f"is_logged_in check failed: {e}")
         return False
@@ -205,101 +213,226 @@ async def login(page, context):
         raise RuntimeError(f"Login timeout - check credentials, 2FA, or CAPTCHA: {e}")
     except Exception as e:
         raise RuntimeError(f"Login failed: {type(e).__name__}: {e}")
+
+async def ensure_logged_in(page, context) -> bool:
+    if not await is_session_valid(page):
+        log.warning("Session expired mid-run, re-logging in...")
+        try:
+            await login(page, context)
+            return True
+        except Exception as e:
+            log.error(f"Re-login failed: {e}")
+            return False
+    return True
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── POST / REEL EXTRACTION ────────────────────────────────────────────────────
+_POST_HREF_JS = """
+() => {
+    const hrefs = new Set();
+    document.querySelectorAll('a[href]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (h && (h.includes('/p/') || h.includes('/reel/'))) {
+            const clean = h.split('?')[0].replace(/\\/$/, '');
+            hrefs.add(clean);
+        }
+    });
+    return Array.from(hrefs);
+}
+"""
+
+_SHARED_DATA_JS = """
+() => {
+    try {
+        const scripts = document.querySelectorAll('script[type="application/json"]');
+        const hrefs = new Set();
+        scripts.forEach(s => {
+            const text = s.textContent || '';
+            const matches = text.matchAll(/"shortcode":"([^"]+)"/g);
+            for (const m of matches) hrefs.add('/p/' + m[1] + '/');
+            const reelMatches = text.matchAll(/"code":"([^"]+)"/g);
+            for (const m of reelMatches) {
+                if (text.includes('"product_type":"clips"') || text.includes('"__typename":"XDTMediaDict"')) {
+                    hrefs.add('/reel/' + m[1] + '/');
+                }
+            }
+        });
+        return Array.from(hrefs);
+    } catch(e) { return []; }
+}
+"""
+
+async def extract_post_hrefs(page, account: str) -> list[str]:
+    hrefs: set[str] = set()
+
+    dom_hrefs = await page.evaluate(_POST_HREF_JS)
+    for h in dom_hrefs:
+        if h:
+            hrefs.add(h)
+    log.info(f"[{account}] DOM strategy: {len(dom_hrefs)} links")
+
+    try:
+        sd_hrefs = await page.evaluate(_SHARED_DATA_JS)
+        for h in sd_hrefs:
+            if h:
+                hrefs.add(h)
+        if sd_hrefs:
+            log.info(f"[{account}] SharedData strategy: {len(sd_hrefs)} additional links")
+    except Exception as e:
+        log.debug(f"[{account}] SharedData extraction failed: {e}")
+
+    result = list(hrefs)
+    log.info(f"[{account}] Total unique post links: {len(result)}")
+    return result
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── CHECKERS ─────────────────────────────────────────────────────────────────
-async def check_dms(page, seen: set) -> bool:
+async def check_dms(page, context, seen: set) -> bool:
     try:
         if not await safe_goto(page, "https://www.instagram.com/direct/inbox/"):
             return False
 
-        try:
-            await page.wait_for_selector('div[role="listitem"]', timeout=8000, state="attached")
-        except PWTimeout:
-            log.warning("DM inbox: timed out waiting for threads")
+        if not await ensure_logged_in(page, context):
             return False
 
-        threads = await page.query_selector_all('div[role="listitem"]')
+        await asyncio.sleep(2)
+
+        title = await page.title()
+        log.debug(f"DM page title: {title}")
+        unread_count = 0
+        title_match = re.search(r'\((\d+)\)', title)
+        if title_match:
+            unread_count = int(title_match.group(1))
+            log.info(f"Page title indicates {unread_count} unread message(s)")
+
+        try:
+            await page.wait_for_selector(
+                'div[role="listitem"], div[role="row"]',
+                timeout=8000, state="attached"
+            )
+        except PWTimeout:
+            log.warning("DM inbox: timed out waiting for threads")
+            if unread_count == 0:
+                return True
+            return False
+
+        threads = await page.query_selector_all('div[role="listitem"], div[role="row"]')
         log.debug(f"Found {len(threads)} DM threads")
 
-        checked = 0
         for thread in threads[:20]:
             try:
-                unread = await thread.query_selector(
-                    'span[data-testid="unread-dot"], '
-                    'div[class*="unread"], '
-                    'span[style*="font-weight: 700"]'
+                name_el = await thread.query_selector(
+                    'span[dir="auto"], '
+                    'span[class*="username"], '
+                    'strong'
                 )
-                if not unread:
-                    continue
-
-                name_el = await thread.query_selector('span[dir="auto"]')
                 if not name_el:
                     continue
 
                 name = (await name_el.inner_text()).strip()
-                if name and name not in seen:
-                    seen.add(name)
+                if not name:
+                    continue
+
+                preview_el = await thread.query_selector(
+                    'span[dir="auto"]:last-child, '
+                    'div[dir="auto"]:last-child'
+                )
+                preview = ""
+                if preview_el:
+                    try:
+                        preview = (await preview_el.inner_text()).strip()
+                    except Exception:
+                        pass
+
+                dm_key = f"{name}:{preview[:40]}" if preview else name
+
+                is_unread = False
+                unread_el = await thread.query_selector(
+                    'span[style*="font-weight: 700"], '
+                    'span[style*="font-weight:700"], '
+                    '[aria-label*="unread"], '
+                    'svg[aria-label*="unread"]'
+                )
+                if unread_el:
+                    is_unread = True
+
+                bold_spans = await thread.query_selector_all('span[style*="font-weight"]')
+                for span in bold_spans:
+                    try:
+                        style = await span.get_attribute("style") or ""
+                        if "700" in style or "bold" in style.lower():
+                            is_unread = True
+                            break
+                    except Exception:
+                        pass
+
+                if unread_count > 0:
+                    is_unread = True
+
+                if is_unread and dm_key not in seen:
+                    seen.add(dm_key)
                     log.info(f"New DM from: {name}")
                     notify("New DM 💬", f"Message from {name}", sound="alert")
 
-                checked += 1
             except Exception as e:
                 log.debug(f"Error parsing DM thread: {e}")
                 continue
 
-        log.debug(f"Checked {checked} unread DM threads")
         return True
 
     except Exception as e:
         log.error(f"DM check failed: {e}")
         return False
 
-async def get_post_hrefs(page, account: str) -> list[str]:
-    hrefs = []
-    for selector in ('a[href*="/p/"]', 'a[href*="/reel/"]'):
-        try:
-            await page.wait_for_selector(selector, timeout=5000, state="attached")
-            break
-        except PWTimeout:
-            continue
-
-    post_links = await page.query_selector_all('a[href*="/p/"], a[href*="/reel/"]')
-    log.info(f"[{account}] Found {len(post_links)} post links")
-    for link in post_links:
-        try:
-            href = (await link.get_attribute("href") or "").strip()
-            if href and href not in hrefs:
-                hrefs.append(href)
-        except Exception as e:
-            log.debug(f"[{account}] Error reading post href: {e}")
-    return hrefs
-
-async def check_account(page, account: str, seen_posts: set, seen_stories: set) -> bool:
+async def check_account(page, context, account: str, seen_posts: set, seen_stories: set) -> bool:
     try:
         if not await safe_goto(page, f"https://www.instagram.com/{account}/"):
             return False
 
-        await asyncio.sleep(2)
+        if not await ensure_logged_in(page, context):
+            return False
+
+        try:
+            await page.wait_for_selector(
+                'header, section, article, main',
+                timeout=10000, state="attached"
+            )
+        except PWTimeout:
+            log.warning(f"[{account}] Profile page structure did not load in time")
+
+        await asyncio.sleep(1)
 
         story_key   = f"{account}:story"
-        story_links = await page.query_selector_all('a[href*="/stories/"]')
-        if story_links and story_key not in seen_stories:
+        story_el    = await page.query_selector(
+            f'a[href*="/stories/{account}/"], '
+            'canvas[aria-label*="story"], '
+            'div[role="button"] canvas, '
+            'header a canvas'
+        )
+        if story_el and story_key not in seen_stories:
             seen_stories.add(story_key)
             log.info(f"New story from {account}")
             notify("New Story 📸", f"{account} posted a story")
-        elif not story_links and story_key in seen_stories:
+        elif not story_el and story_key in seen_stories:
             seen_stories.discard(story_key)
+            log.debug(f"[{account}] Story expired, key cleared")
 
-        hrefs = await get_post_hrefs(page, account)
+        hrefs = await extract_post_hrefs(page, account)
 
         if not hrefs:
-            log.warning(f"[{account}] No post links found, retrying in 4s...")
-            await asyncio.sleep(4)
+            log.warning(f"[{account}] No post links found, waiting 5s and retrying...")
+            await asyncio.sleep(5)
             if not await safe_goto(page, f"https://www.instagram.com/{account}/"):
                 return False
-            await asyncio.sleep(3)
-            hrefs = await get_post_hrefs(page, account)
+            try:
+                await page.wait_for_selector(
+                    'header, section, article, main',
+                    timeout=10000, state="attached"
+                )
+            except PWTimeout:
+                pass
+            await asyncio.sleep(2)
+            hrefs = await extract_post_hrefs(page, account)
 
         if not hrefs:
             log.warning(f"[{account}] Still no post links after retry — skipping cycle")
@@ -398,8 +531,8 @@ async def run():
 
             log.info("📋 Seeding initial state...")
             for account in ACCOUNTS_TO_WATCH:
-                await check_account(page, account, seen_posts, seen_stories)
-            await check_dms(page, seen_dms)
+                await check_account(page, context, account, seen_posts, seen_stories)
+            await check_dms(page, context, seen_dms)
             save_state({
                 "posts":      list(seen_posts),
                 "stories":    list(seen_stories),
@@ -422,6 +555,8 @@ async def run():
                     if not await is_logged_in(page):
                         await login(page, context)
                         storage = json.loads(SESSION_FILE.read_text())
+                    else:
+                        await dismiss_popups(page)
                     last_reload = datetime.now()
 
                 log.info(f"🔍 Checking [{datetime.now().strftime('%H:%M:%S')}]...")
@@ -429,14 +564,14 @@ async def run():
                 cycle_errors = 0
                 for account in ACCOUNTS_TO_WATCH:
                     try:
-                        if not await check_account(page, account, seen_posts, seen_stories):
+                        if not await check_account(page, context, account, seen_posts, seen_stories):
                             cycle_errors += 1
                     except Exception as e:
                         cycle_errors += 1
                         log.error(f"[{account}] Unhandled error: {type(e).__name__}: {e}")
 
                 try:
-                    if not await check_dms(page, seen_dms):
+                    if not await check_dms(page, context, seen_dms):
                         cycle_errors += 1
                 except Exception as e:
                     cycle_errors += 1
@@ -469,6 +604,8 @@ async def run():
                     if not await is_logged_in(page):
                         await login(page, context)
                         storage = json.loads(SESSION_FILE.read_text())
+                    else:
+                        await dismiss_popups(page)
 
                     consecutive_errors = 0
                     last_reload        = datetime.now()
@@ -531,5 +668,6 @@ if __name__ == "__main__":
 
     monitor_thread = threading.Thread(target=run_monitor, daemon=True)
     monitor_thread.start()
+
     log.info("Starting FastAPI server on 0.0.0.0:7860")
     uvicorn.run(app, host="0.0.0.0", port=7860, log_level="warning")
