@@ -11,6 +11,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY monitor.py .
 
-VOLUME ["/data"]
-
 CMD ["python", "-u", "monitor.py"]
