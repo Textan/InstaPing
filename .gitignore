@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+data/
+downloads/
+state.json
+instagram-session.json
+*.zip.fernet
+*.zip.fernet.sha256
+decrypted/

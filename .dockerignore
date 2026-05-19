@@ -1,0 +1,11 @@
+.git
+.env
+__pycache__/
+*.pyc
+.venv/
+data/
+downloads/
+state.json
+decrypted/
+*.zip.fernet
+*.zip.fernet.sha256
